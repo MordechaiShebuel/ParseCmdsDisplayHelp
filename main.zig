@@ -27,11 +27,9 @@ fn isIdentifierChar(c: u8) bool {
 
 fn isIdentifier(value: []const u8) bool {
     if (value.len == 0 or !isIdentifierStart(value[0])) return false;
-
     for (value[1..]) |c| {
         if (!isIdentifierChar(c)) return false;
     }
-
     return true;
 }
 
@@ -50,7 +48,6 @@ fn readLuaVariables(
         while (name_end < rest.len and isIdentifierChar(rest[name_end])) {
             name_end += 1;
         }
-
         if (name_end == 0) continue;
 
         const name = rest[0..name_end];
@@ -92,10 +89,7 @@ fn expandPart(
     return allocator.dupe(u8, std.mem.trim(u8, value, "\"'"));
 }
 
-fn commonKeyName(
-    allocator: std.mem.Allocator,
-    key: []const u8,
-) ![]const u8 {
+fn commonKeyName(allocator: std.mem.Allocator, key: []const u8) ![]const u8 {
     const value = trim(key);
 
     var upper = try allocator.alloc(u8, value.len);
@@ -108,19 +102,15 @@ fn commonKeyName(
     const result =
         if (std.mem.eql(u8, upper, "SUPER"))
             "Super"
-        else if (std.mem.eql(u8, upper, "ALT") or
-        std.mem.eql(u8, upper, "OPTION"))
+        else if (std.mem.eql(u8, upper, "ALT") or std.mem.eql(u8, upper, "OPTION"))
             "Alt"
-        else if (std.mem.eql(u8, upper, "CTRL") or
-        std.mem.eql(u8, upper, "CONTROL"))
+        else if (std.mem.eql(u8, upper, "CTRL") or std.mem.eql(u8, upper, "CONTROL"))
             "Ctrl"
         else if (std.mem.eql(u8, upper, "SHIFT"))
             "Shift"
-        else if (std.mem.eql(u8, upper, "RETURN") or
-        std.mem.eql(u8, upper, "ENTER"))
+        else if (std.mem.eql(u8, upper, "RETURN") or std.mem.eql(u8, upper, "ENTER"))
             "Enter"
-        else if (std.mem.eql(u8, upper, "ESC") or
-        std.mem.eql(u8, upper, "ESCAPE"))
+        else if (std.mem.eql(u8, upper, "ESC") or std.mem.eql(u8, upper, "ESCAPE"))
             "Esc"
         else if (std.mem.eql(u8, upper, "TAB"))
             "Tab"
@@ -128,8 +118,7 @@ fn commonKeyName(
             "Space"
         else if (std.mem.eql(u8, upper, "BACKSPACE"))
             "Backspace"
-        else if (std.mem.eql(u8, upper, "DELETE") or
-        std.mem.eql(u8, upper, "DEL"))
+        else if (std.mem.eql(u8, upper, "DELETE") or std.mem.eql(u8, upper, "DEL"))
             "Delete"
         else if (std.mem.eql(u8, upper, "UP"))
             "Up"
@@ -145,6 +134,26 @@ fn commonKeyName(
     return allocator.dupe(u8, result);
 }
 
+fn friendlyKeyName(allocator: std.mem.Allocator, raw: []const u8) ![]const u8 {
+    const k = trim(raw);
+
+    // Mouse buttons
+    if (std.mem.eql(u8, k, "mouse:272") or std.mem.eql(u8, k, "mouse_left"))
+        return allocator.dupe(u8, "Left Click");
+    if (std.mem.eql(u8, k, "mouse:273") or std.mem.eql(u8, k, "mouse_right"))
+        return allocator.dupe(u8, "Right Click");
+    if (std.mem.eql(u8, k, "mouse_down"))
+        return allocator.dupe(u8, "Mouse Down");
+    if (std.mem.eql(u8, k, "mouse_up"))
+        return allocator.dupe(u8, "Mouse Up");
+
+    // Drop pure XF86 media keys
+    if (std.mem.startsWith(u8, k, "XF86"))
+        return allocator.dupe(u8, "");
+
+    return commonKeyName(allocator, k);
+}
+
 fn normalizeShortcut(
     allocator: std.mem.Allocator,
     shortcut: []const u8,
@@ -156,7 +165,7 @@ fn normalizeShortcut(
     var first = true;
 
     while (parts.next()) |part| {
-        const key = try commonKeyName(allocator, part);
+        const key = try friendlyKeyName(allocator, part);
         defer allocator.free(key);
 
         if (key.len == 0) continue;
@@ -164,7 +173,6 @@ fn normalizeShortcut(
         if (!first) {
             try output.appendSlice(allocator, " + ");
         }
-
         try output.appendSlice(allocator, key);
         first = false;
     }
@@ -190,12 +198,32 @@ fn parseShortcut(
         if (!first) {
             try expanded.appendSlice(allocator, " + ");
         }
-
         try expanded.appendSlice(allocator, value);
         first = false;
     }
 
     return normalizeShortcut(allocator, expanded.items);
+}
+
+// Helper: try to extract a quoted / long-string argument
+fn extractStringArg(allocator: std.mem.Allocator, s: []const u8) !?[]const u8 {
+    const t = trim(s);
+    if (t.len < 2) return null;
+
+    // "..." or '...'
+    if (t[0] == '"' or t[0] == '\'') {
+        const q = t[0];
+        if (std.mem.indexOfScalar(u8, t[1..], q)) |end| {
+            return try allocator.dupe(u8, t[1 .. end + 1]);
+        }
+    }
+    // [[...]]
+    if (std.mem.startsWith(u8, t, "[[")) {
+        if (std.mem.indexOf(u8, t[2..], "]]")) |end| {
+            return try allocator.dupe(u8, t[2 .. end + 2]);
+        }
+    }
+    return null;
 }
 
 fn extractKeyBindings(
@@ -225,27 +253,76 @@ fn extractKeyBindings(
             std.mem.indexOfScalarPos(u8, line, open_paren + 1, ',') orelse continue;
 
         const shortcut_expression = trim(line[open_paren + 1 .. comma]);
+        const after_comma = trim(line[comma + 1 ..]);
 
-        const dsp_pos =
-            std.mem.indexOfPos(u8, line, comma, "hl.dsp.") orelse continue;
+        // ---------- build the action string ----------
+        var action: []const u8 = undefined;
 
-        const action_start = dsp_pos + "hl.dsp.".len;
+        if (std.mem.indexOf(u8, after_comma, "hl.dsp.exec_cmd")) |_| {
+            if (std.mem.indexOf(u8, after_comma, "exec_cmd(")) |pos| {
+                const arg_start = pos + "exec_cmd(".len;
+                if (try extractStringArg(allocator, after_comma[arg_start..])) |cmd| {
+                    action = try std.fmt.allocPrint(allocator, "exec: {s}", .{cmd});
+                } else {
+                    // fallback for concatenations: ipc .. "screenshot-..."
+                    const close = std.mem.indexOfScalar(u8, after_comma[arg_start..], ')') orelse after_comma.len - arg_start;
+                    const expr = trim(after_comma[arg_start .. arg_start + close]);
+                    action = try std.fmt.allocPrint(allocator, "exec: {s}", .{expr});
+                }
+            } else {
+                action = try allocator.dupe(u8, "exec_cmd");
+            }
+        } else if (std.mem.indexOf(u8, after_comma, "send_shortcut_once")) |_| {
+            // send_shortcut_once("CTRL", "b")  →  send: Ctrl + B
+            var keys: std.ArrayList(u8) = .empty;
+            defer keys.deinit(allocator);
 
-        var action_end = action_start;
-        while (action_end < line.len and isIdentifierChar(line[action_end])) {
-            action_end += 1;
+            var search = after_comma;
+            var first = true;
+            while (std.mem.indexOfScalar(u8, search, '"')) |q1| {
+                const after_q1 = search[q1 + 1 ..];
+                if (std.mem.indexOfScalar(u8, after_q1, '"')) |q2| {
+                    const key = after_q1[0..q2];
+                    const nice = try commonKeyName(allocator, key);
+                    defer allocator.free(nice);
+
+                    if (!first) try keys.appendSlice(allocator, " + ");
+                    try keys.appendSlice(allocator, nice);
+                    first = false;
+
+                    search = after_q1[q2 + 1 ..];
+                } else break;
+            }
+
+            if (keys.items.len > 0) {
+                action = try std.fmt.allocPrint(allocator, "send: {s}", .{keys.items});
+            } else {
+                action = try allocator.dupe(u8, "send_shortcut");
+            }
+        } else if (std.mem.indexOf(u8, after_comma, "hl.dsp.")) |dsp| {
+            const start = dsp + "hl.dsp.".len;
+            var end = start;
+            while (end < after_comma.len and isIdentifierChar(after_comma[end])) : (end += 1) {}
+            action = try allocator.dupe(u8, trim(after_comma[start..end]));
+        } else {
+            // unknown form – short preview
+            const preview = if (after_comma.len > 50) after_comma[0..50] else after_comma;
+            action = try std.fmt.allocPrint(allocator, "[{s}]", .{preview});
         }
 
-        const action = trim(line[action_start..action_end]);
-        if (action.len == 0) continue;
+        // ---------- shortcut ----------
+        const shortcut = try parseShortcut(allocator, shortcut_expression, &variables);
+
+        // Filter empty / XF86 leftovers
+        if (shortcut.len == 0 or std.mem.startsWith(u8, shortcut, "XF86")) {
+            allocator.free(shortcut);
+            allocator.free(action);
+            continue;
+        }
 
         try bindings.append(allocator, .{
-            .shortcut = try parseShortcut(
-                allocator,
-                shortcut_expression,
-                &variables,
-            ),
-            .action = try allocator.dupe(u8, action),
+            .shortcut = shortcut,
+            .action = action,
         });
     }
 
@@ -293,10 +370,7 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(allocator);
 
     if (args.len < 2) {
-        std.debug.print(
-            "Usage: keybind_viewer <keybinds.lua>\n",
-            .{},
-        );
+        std.debug.print("Usage: keybind_viewer <keybinds.lua>\n", .{});
         return error.InvalidArguments;
     }
 
@@ -319,19 +393,14 @@ pub fn main(init: std.process.Init) !void {
         bindings.deinit(allocator);
     }
 
-    const display_text = try bindingsAsText(
-        allocator,
-        bindings.items,
-    );
+    const display_text = try bindingsAsText(allocator, bindings.items);
     defer allocator.free(display_text);
 
     var app_data = AppData{
         .text = display_text,
     };
 
-    const app = gtk.kb_application_new(
-        "com.example.LuaKeybindViewer",
-    );
+    const app = gtk.kb_application_new("com.example.LuaKeybindViewer");
 
     gtk.kb_application_connect_activate(
         app,

@@ -58,34 +58,27 @@ void kb_configure_window(GtkWidget *window) {
 GtkWidget *kb_create_text_view(const char *text) {
     GtkWidget *text_view = gtk_text_view_new();
 
-    gtk_text_view_set_editable(
-        GTK_TEXT_VIEW(text_view),
-        FALSE
-    );
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(text_view), FALSE);
+    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(text_view), FALSE);
+    gtk_text_view_set_monospace(GTK_TEXT_VIEW(text_view), TRUE);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_view), GTK_WRAP_NONE);
 
-    gtk_text_view_set_cursor_visible(
-        GTK_TEXT_VIEW(text_view),
-        FALSE
-    );
+    /* Bigger font */
+    PangoFontDescription *font_desc = pango_font_description_from_string("Monospace 14");
+    gtk_widget_override_font(text_view, font_desc);
+    pango_font_description_free(font_desc);
 
-    gtk_text_view_set_monospace(
-        GTK_TEXT_VIEW(text_view),
-        TRUE
-    );
+    /* Center the text */
+    gtk_text_view_set_justification(GTK_TEXT_VIEW(text_view), GTK_JUSTIFY_CENTER);
 
-    gtk_text_view_set_wrap_mode(
-        GTK_TEXT_VIEW(text_view),
-        GTK_WRAP_NONE
-    );
+    /* Optional: a bit of padding so it doesn’t stick to the edges */
+    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(text_view), 20);
+    gtk_text_view_set_right_margin(GTK_TEXT_VIEW(text_view), 20);
+    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(text_view), 12);
+    gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(text_view), 12);
 
-    GtkTextBuffer *buffer =
-        gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
-
-    gtk_text_buffer_set_text(
-        buffer,
-        text,
-        -1
-    );
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
+    gtk_text_buffer_set_text(buffer, text, -1);
 
     return text_view;
 }

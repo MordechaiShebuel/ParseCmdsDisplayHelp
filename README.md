@@ -30,3 +30,5 @@
 # Compile of this is also not working
 
 # LLMs cannot generate code that runs the first time, I don't know Zig or Nim all that well, so it is difficult for me to diagnose what it got wrong.z
+
+# Grok code again saved this, got a functional bit of code, some cleanup still needed, but looks much better than the shell version I was using
