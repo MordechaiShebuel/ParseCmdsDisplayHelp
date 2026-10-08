@@ -30,6 +30,11 @@ pub fn build(b: *std.Build) void {
     });
 
     module.linkSystemLibrary("gtk+-3.0", .{});
+    module.linkSystemLibrary("pthread", .{});
+    module.linkSystemLibrary("dl", .{});
+    module.linkSystemLibrary("m", .{});
+
+    b.installArtifact(exe);
 
     b.installArtifact(exe);
 
