@@ -13,6 +13,14 @@ const AppData = struct {
     text: [:0]const u8,
 };
 
+// ---------- JSON types ----------
+
+const BindJson = struct {
+    key: []const u8,
+    description: []const u8,
+    // options is optional and ignored for display
+};
+
 fn trim(value: []const u8) []const u8 {
     return std.mem.trim(u8, value, " \t\r\n");
 }
@@ -152,6 +160,73 @@ fn friendlyKeyName(allocator: std.mem.Allocator, raw: []const u8) ![]const u8 {
         return allocator.dupe(u8, "");
 
     return commonKeyName(allocator, k);
+}
+
+// ---------- JSON loading ----------
+
+fn loadBindingsFromJson(
+    allocator: std.mem.Allocator,
+    json_path: []const u8,
+    io: std.Io, // ← add this parameter
+) !std.ArrayList(KeyBinding) {
+    const source = try std.Io.Dir.cwd().readFileAlloc(
+        io,
+        json_path,
+        allocator,
+        .limited(10 * 1024 * 1024),
+    );
+    defer allocator.free(source);
+
+    // Parse as an array of BindJson
+    const parsed = try std.json.parseFromSlice(
+        []BindJson,
+        allocator,
+        source,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    var bindings: std.ArrayList(KeyBinding) = .empty;
+
+    for (parsed.value) |item| {
+        const shortcut = try normalizeShortcut(allocator, item.key);
+        const action = try allocator.dupe(u8, item.description);
+
+        // Optional: skip empty shortcuts
+        if (shortcut.len == 0) {
+            allocator.free(shortcut);
+            allocator.free(action);
+            continue;
+        }
+
+        try bindings.append(allocator, .{
+            .shortcut = shortcut,
+            .action = action,
+        });
+    }
+
+    return bindings;
+}
+
+fn bindingsAsText(
+    allocator: std.mem.Allocator,
+    bindings: []const KeyBinding,
+) ![:0]const u8 {
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(allocator);
+
+    if (bindings.len == 0) {
+        try output.appendSlice(allocator, "No keybindings found.");
+    } else {
+        for (bindings) |binding| {
+            try output.appendSlice(allocator, binding.shortcut);
+            try output.appendSlice(allocator, "    →    ");
+            try output.appendSlice(allocator, binding.action);
+            try output.append(allocator, '\n');
+        }
+    }
+
+    return try allocator.dupeZ(u8, output.items);
 }
 
 fn normalizeShortcut(
@@ -396,27 +471,6 @@ fn extractKeyBindings(
     return bindings;
 }
 
-fn bindingsAsText(
-    allocator: std.mem.Allocator,
-    bindings: []const KeyBinding,
-) ![:0]const u8 {
-    var output: std.ArrayList(u8) = .empty;
-    defer output.deinit(allocator);
-
-    if (bindings.len == 0) {
-        try output.appendSlice(allocator, "No keybindings found.");
-    } else {
-        for (bindings) |binding| {
-            try output.appendSlice(allocator, binding.shortcut);
-            try output.appendSlice(allocator, "    →    ");
-            try output.appendSlice(allocator, binding.action);
-            try output.append(allocator, '\n');
-        }
-    }
-
-    return try allocator.dupeZ(u8, output.items);
-}
-
 fn activate(
     app: ?*gtk.GtkApplication,
     user_data: ?*anyopaque,
@@ -435,27 +489,21 @@ pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
 
     const args = try init.minimal.args.toSlice(allocator);
+    // optional: defer allocator.free(args);  // only if toSlice allocates
 
     if (args.len < 2) {
-        std.debug.print("Usage: keybind_viewer <keybinds.lua>\n", .{});
+        std.debug.print("Usage: keybind_viewer <binds.json>\n", .{});
         return error.InvalidArguments;
     }
 
-    const lua_path = args[1];
+    const json_path = args[1]; // ← fixed
 
-    const source = try std.Io.Dir.cwd().readFileAlloc(
-        init.io,
-        lua_path,
-        allocator,
-        .limited(10 * 1024 * 1024),
-    );
-    defer allocator.free(source);
+    var bindings = try loadBindingsFromJson(allocator, json_path, init.io);
 
-    var bindings = try extractKeyBindings(allocator, source);
     defer {
-        for (bindings.items) |binding| {
-            allocator.free(binding.shortcut);
-            allocator.free(binding.action);
+        for (bindings.items) |b| {
+            allocator.free(b.shortcut);
+            allocator.free(b.action);
         }
         bindings.deinit(allocator);
     }
